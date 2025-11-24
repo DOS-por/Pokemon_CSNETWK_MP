@@ -1,0 +1,1 @@
+"""Protocol layer for message encoding/decoding"""
