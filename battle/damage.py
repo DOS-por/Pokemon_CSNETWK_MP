@@ -1,189 +1,89 @@
 """
 Pokemon damage calculation formulas
-Based on simplified Pokemon battle mechanics
+Simplified mechanics integrated with Move objects
+Supports stat boosts and type effectiveness
 """
 import random
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from .pokemon import Pokemon
-
-
-def calculate_damage(attacker: 'Pokemon', defender: 'Pokemon', 
-                     move_power: int = 50, move_type: str = None,
-                     is_special: bool = False) -> int:
+def calculate_damage(attacker, defender, move, stat_boosts=None) -> int:
     """
-    Calculate damage using simplified Pokemon formula
-    
-    Simplified formula:
-    Damage = ((2 * Level / 5 + 2) * Power * A / D / 50 + 2) * Modifier
-    
-    For this implementation:
-    - Level is assumed to be 50 for all Pokemon
-    - A = attacker's Attack or Sp. Attack
-    - D = defender's Defense or Sp. Defense
-    - Modifier includes STAB, Type effectiveness, and random factor
-    
+    Calculate damage using simplified Pokemon formula.
+
     Args:
-        attacker: Attacking Pokemon
-        defender: Defending Pokemon
-        move_power: Base power of the move (default 50)
-        move_type: Type of the move (defaults to attacker's type1)
-        is_special: Whether the move is special (uses Sp. Attack/Defense)
-    
+        attacker: Pokemon object using the move
+        defender: Pokemon object being attacked
+        move: Move object being used
+        stat_boosts: Optional dict of temporary stat boosts
+                     e.g., {'attack': 1, 'defense': 0, 'special_attack': 2, 'special_defense': 0}
+
     Returns:
-        Calculated damage amount
+        Calculated damage as integer
     """
     level = 50
-    
-    # Determine attack and defense stats
-    if is_special:
-        attack_stat = attacker.sp_attack
-        defense_stat = defender.sp_defense
+
+    # Determine which stats to use
+    if move.category == "special":
+        base_attack = attacker.sp_attack
+        base_defense = defender.sp_defense
+        attack_key = 'special_attack'
+        defense_key = 'special_defense'
     else:
-        attack_stat = attacker.attack
-        defense_stat = defender.defense
-    
+        base_attack = attacker.attack
+        base_defense = defender.defense
+        attack_key = 'attack'
+        defense_key = 'defense'
+
+    # Apply stat boosts if provided
+    boost_multiplier = { -6: 0.25, -5: 0.28, -4: 0.33, -3: 0.4, -2: 0.5,
+                         -1: 0.66, 0: 1.0, 1: 1.5, 2: 2.0, 3: 2.5, 4: 3.0,
+                         5: 3.5, 6: 4.0 }
+
+    if stat_boosts:
+        base_attack *= boost_multiplier.get(stat_boosts.get(attack_key, 0), 1.0)
+        base_defense *= boost_multiplier.get(stat_boosts.get(defense_key, 0), 1.0)
+
     # Prevent division by zero
-    if defense_stat <= 0:
-        defense_stat = 1
-    
-    # Base damage calculation
-    base_damage = ((2 * level / 5 + 2) * move_power * attack_stat / defense_stat / 50 + 2)
-    
-    # Calculate modifiers
-    modifier = 1.0
-    
-    # STAB (Same Type Attack Bonus) - 1.5x if move type matches attacker's type
-    if move_type is None:
-        move_type = attacker.type1
-    
+    if base_defense <= 0:
+        base_defense = 1
+
+    # Base damage formula
+    base_damage = ((2 * level / 5 + 2) * move.power * base_attack / base_defense / 50 + 2)
+
+    # Determine move type for STAB and type effectiveness
+    move_type = "normal" if move.category == "normal" else move.name.split()[0]
+
+    # STAB (Same Type Attack Bonus)
     if move_type.lower() == attacker.type1.lower() or \
        (attacker.type2 and move_type.lower() == attacker.type2.lower()):
-        modifier *= 1.5
-    
+        base_damage *= 1.5
+
     # Type effectiveness
-    type_effectiveness = get_type_effectiveness(move_type, defender)
-    modifier *= type_effectiveness
-    
+    effectiveness = get_type_effectiveness(move_type, defender)
+    base_damage *= effectiveness
+
     # Random factor (0.85 to 1.0)
-    random_factor = random.uniform(0.85, 1.0)
-    modifier *= random_factor
-    
-    # Calculate final damage
-    damage = int(base_damage * modifier)
-    
-    # Ensure at least 1 damage if attack connects
-    return max(1, damage)
+    base_damage *= random.uniform(0.85, 1.0)
+
+    return max(1, int(base_damage))
 
 
-def get_type_effectiveness(attack_type: str, defender: 'Pokemon') -> float:
+def get_type_effectiveness(attack_type: str, defender) -> float:
     """
-    Get type effectiveness multiplier
-    
+    Get type effectiveness multiplier from defender's type chart.
+
     Args:
         attack_type: Type of the attacking move
-        defender: Defending Pokemon
-    
+        defender: Pokemon object being attacked
+
     Returns:
         Effectiveness multiplier (0.0, 0.25, 0.5, 1.0, 2.0, or 4.0)
     """
     attack_type = attack_type.lower()
-    
-    # Get effectiveness from defender's type chart
-    # The CSV contains how much damage this Pokemon takes from each type
-    effectiveness = defender.type_effectiveness.get(attack_type, 1.0)
-    
-    return effectiveness
-
-
-def calculate_critical_hit(base_damage: int) -> int:
-    """
-    Calculate critical hit damage (2x damage)
-    Critical hit chance is 1/24 (~4.17%)
-    
-    Args:
-        base_damage: Base damage before critical
-    
-    Returns:
-        Damage after critical calculation
-    """
-    if random.randint(1, 24) == 1:
-        return base_damage * 2
-    return base_damage
-
-
-def calculate_damage_with_critical(attacker: 'Pokemon', defender: 'Pokemon',
-                                   move_power: int = 50, move_type: str = None,
-                                   is_special: bool = False) -> tuple[int, bool]:
-    """
-    Calculate damage with critical hit chance
-    
-    Returns:
-        tuple: (damage, is_critical)
-    """
-    base_damage = calculate_damage(attacker, defender, move_power, move_type, is_special)
-    
-    # Check for critical hit
-    if random.randint(1, 24) == 1:
-        return base_damage * 2, True
-    
-    return base_damage, False
-
-
-def get_move_power_by_type(pokemon_type: str) -> int:
-    """
-    Get default move power based on Pokemon type
-    This is a simplified version - in real Pokemon, moves have different powers
-    
-    Returns:
-        Base power of the move
-    """
-    # Standard move powers by type (simplified)
-    type_powers = {
-        'normal': 50,
-        'fire': 55,
-        'water': 55,
-        'electric': 55,
-        'grass': 55,
-        'ice': 55,
-        'fighting': 60,
-        'poison': 50,
-        'ground': 60,
-        'flying': 55,
-        'psychic': 55,
-        'bug': 50,
-        'rock': 60,
-        'ghost': 55,
-        'dragon': 60,
-        'dark': 55,
-        'steel': 55,
-        'fairy': 55
-    }
-    
-    return type_powers.get(pokemon_type.lower(), 50)
-
-
-def is_move_special(move_type: str) -> bool:
-    """
-    Determine if a move type is special or physical
-    
-    Physical: Normal, Fighting, Flying, Poison, Ground, Rock, Bug, Ghost, Steel
-    Special: Fire, Water, Electric, Grass, Ice, Psychic, Dragon, Dark, Fairy
-    
-    Returns:
-        True if special, False if physical
-    """
-    special_types = {
-        'fire', 'water', 'electric', 'grass', 'ice',
-        'psychic', 'dragon', 'dark', 'fairy'
-    }
-    
-    return move_type.lower() in special_types
+    return defender.type_effectiveness.get(attack_type, 1.0)
 
 
 def format_effectiveness(multiplier: float) -> str:
-    """Format type effectiveness for display"""
+    """Format type effectiveness for display."""
     if multiplier == 0:
         return "No effect!"
     elif multiplier < 0.5:
