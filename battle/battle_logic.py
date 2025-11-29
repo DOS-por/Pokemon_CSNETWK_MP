@@ -2,43 +2,30 @@
 Battle logic for Pokemon combat
 Handles turn-based battle flow, HP management, and win conditions
 """
-from typing import Optional, Tuple
+from typing import Optional
 from enum import Enum
 from .pokemon import Pokemon
-from .damage import calculate_damage_with_critical, get_move_power_by_type, is_move_special
-
+from .damage import calculate_damage   # <-- import the unified function
+from .move import Move
 
 class BattlePhase(Enum):
-    """Battle phases"""
     NOT_STARTED = "NOT_STARTED"
     PLAYER1_TURN = "PLAYER1_TURN"
     PLAYER2_TURN = "PLAYER2_TURN"
     ENDED = "ENDED"
 
-
 class BattleOutcome(Enum):
-    """Battle outcome"""
     ONGOING = "ONGOING"
     PLAYER1_WIN = "PLAYER1_WIN"
     PLAYER2_WIN = "PLAYER2_WIN"
     DRAW = "DRAW"
     DISCONNECT = "DISCONNECT"
 
-
 class Battle:
     """Manages a Pokemon battle between two players"""
     
     def __init__(self, player1_name: str, player2_name: str,
                  player1_pokemon: Pokemon, player2_pokemon: Pokemon):
-        """
-        Initialize a battle
-        
-        Args:
-            player1_name: Name of player 1
-            player2_name: Name of player 2
-            player1_pokemon: Player 1's Pokemon
-            player2_pokemon: Player 2's Pokemon
-        """
         self.player1_name = player1_name
         self.player2_name = player2_name
         self.player1_pokemon = player1_pokemon
@@ -57,48 +44,26 @@ class Battle:
         self.first_player = self._determine_first_player()
     
     def _determine_first_player(self) -> str:
-        """
-        Determine which player goes first based on Pokemon speed
-        
-        Returns:
-            Player name who goes first
-        """
         if self.player1_pokemon.speed > self.player2_pokemon.speed:
             return self.player1_name
         elif self.player2_pokemon.speed > self.player1_pokemon.speed:
             return self.player2_name
         else:
-            # Equal speed, random choice
             import random
             return random.choice([self.player1_name, self.player2_name])
     
     def start_battle(self):
-        """Start the battle"""
         self.phase = BattlePhase.PLAYER1_TURN if self.first_player == self.player1_name \
                      else BattlePhase.PLAYER2_TURN
-        
         self.log(f"Battle started between {self.player1_name}'s {self.player1_pokemon.name} "
-                f"and {self.player2_name}'s {self.player2_pokemon.name}!")
+                 f"and {self.player2_name}'s {self.player2_pokemon.name}!")
         self.log(f"{self.first_player} will go first!")
     
-    def execute_attack(self, attacker_name: str, move_type: Optional[str] = None) -> dict:
-        """
-        Execute an attack
-        
-        Args:
-            attacker_name: Name of attacking player
-            move_type: Type of move (defaults to Pokemon's type)
-        
-        Returns:
-            Dictionary with attack results
-        """
+    def execute_attack(self, attacker_name: str, move: Move) -> dict:
         # Validate it's the attacker's turn
         if not self.is_player_turn(attacker_name):
-            return {
-                'success': False,
-                'error': 'Not your turn'
-            }
-        
+            return {'success': False, 'error': 'Not your turn'}
+
         # Get attacker and defender
         if attacker_name == self.player1_name:
             attacker_pokemon = self.player1_pokemon
@@ -108,51 +73,30 @@ class Battle:
             attacker_pokemon = self.player2_pokemon
             defender_pokemon = self.player1_pokemon
             defender_name = self.player1_name
-        
-        # Determine move type
-        if move_type is None:
-            move_type = attacker_pokemon.type1
-        
-        # Calculate move power and whether it's special
-        move_power = get_move_power_by_type(move_type)
-        is_special_move = is_move_special(move_type)
-        
-        # Calculate damage
-        damage, is_critical = calculate_damage_with_critical(
-            attacker_pokemon, defender_pokemon, move_power, move_type, is_special_move
-        )
-        
-        # Apply damage
+
+        damage = calculate_damage(attacker_pokemon, defender_pokemon, move)
         actual_damage = defender_pokemon.take_damage(damage)
-        
+
         # Log attack
-        attack_msg = f"{attacker_name}'s {attacker_pokemon.name} used {move_type.upper()} attack!"
-        self.log(attack_msg)
-        
-        if is_critical:
-            self.log("Critical hit!")
-        
+        self.log(f"{attacker_name}'s {attacker_pokemon.name} used {move.name} attack!")
         self.log(f"{defender_name}'s {defender_pokemon.name} took {actual_damage} damage!")
         self.log(f"{defender_pokemon.name} HP: {defender_pokemon.current_hp}/{defender_pokemon.max_hp}")
-        
-        # Increment turn counter
+
+        # Increment turn counter and switch turns
         self.turn_count += 1
-        
-        # Switch turns
         self._switch_turn()
-        
-        # Check for battle end
+
+        # Check outcome
         outcome = self.check_outcome()
-        
+
         return {
             'success': True,
             'damage': actual_damage,
-            'is_critical': is_critical,
             'defender_hp': defender_pokemon.current_hp,
             'defender_max_hp': defender_pokemon.max_hp,
             'attacker': attacker_name,
             'defender': defender_name,
-            'move_type': move_type,
+            'move_type': move.move_type,
             'outcome': outcome
         }
     

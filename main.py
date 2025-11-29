@@ -22,9 +22,10 @@ from protocol.messages import (
     create_chat_message, create_disconnect
 )
 from protocol.state_machine import StateMachine, ConnectionState
-from battle.pokemon import PokemonDatabase, Pokemon
+from battle.database import PokemonDatabase
+from battle.pokemon import Pokemon
 from battle.battle_logic import Battle, BattleOutcome
-from battle.damage import get_move_power_by_type
+from battle.move import Move
 from chat.chat_handler import ChatHandler
 from ui import cli
 
@@ -338,23 +339,37 @@ class PokeProtocolClient:
             self.my_pokemon, self.opponent_pokemon
         )
     
-    def execute_attack(self, move_type: str = None):
-        """Execute attack"""
+    def execute_attack(self, move: Move):
         if not self.battle or not self.battle.is_player_turn(self.player_name):
             cli.print_error("Not your turn!")
             return
-        
-        if move_type is None:
-            move_type = self.my_pokemon.type1
-        
-        result = self.battle.execute_attack(self.player_name, move_type)
-        
+
+        # Check PP
+        if not move.use():
+            cli.print_error(f"{move.name} has no remaining uses!")
+            return
+
+        # Run battle logic with move details
+        result = self.battle.execute_attack(self.player_name, move)
+
         if result['success']:
-            # Send ATTACK message
+            # Decide who goes next
+            next_turn_player = (
+                self.opponent_name
+                if self.battle.get_current_turn_player() == self.player_name
+                else self.player_name
+            )
+
+            # Send ATTACK message with all required fields
             attack_msg = create_attack(
-                self.player_name, move_type, result['damage'], result['is_critical']
+                attacker=self.player_name,
+                move_type=move.move_type,
+                damage=result['damage'],
+                turn_number=self.battle.turn_count + 1,
+                next_turn_player=next_turn_player
             )
             self.send_message(attack_msg)
+
     
     def _end_battle(self, winner: str):
         """End battle"""
@@ -437,8 +452,15 @@ def main():
                 ])
                 
                 if action == 0:  # Attack
-                    move_type = client.my_pokemon.type1
-                    client.execute_attack(move_type)
+                    # Show all available moves
+                    moves = client.my_pokemon.moves
+                    move_names = [str(m) for m in moves]  # __str__ gives nice formatting
+                    
+                    move_choice = cli.print_menu("Choose a move", move_names)
+                    chosen_move = moves[move_choice]
+                    
+                    # Execute attack using the chosen move's type
+                    client.execute_attack(chosen_move)
                     time.sleep(1)
                 elif action == 1:  # Chat
                     msg = cli.get_user_input("Message")
@@ -500,9 +522,14 @@ def main():
                     "Forfeit"
                 ])
                 
-                if action == 0:
-                    move_type = client.my_pokemon.type1
-                    client.execute_attack(move_type)
+                if action == 0:  # Attack
+                    moves = client.my_pokemon.moves
+                    move_names = [str(m) for m in moves]
+                    move_choice = cli.print_menu("Choose a move", move_names)
+                    chosen_move = moves[move_choice]
+
+                    # Pass the Move object directly
+                    client.execute_attack(chosen_move)
                     time.sleep(1)
                 elif action == 1:
                     msg = cli.get_user_input("Message")

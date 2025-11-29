@@ -5,7 +5,6 @@ class Pokemon:
         self,
         pokedex_number: int,
         name: str,
-        classification: str,
         type1: str,
         type2: str,
         hp: int,
@@ -20,7 +19,6 @@ class Pokemon:
     ):
         self.pokedex_number = pokedex_number
         self.name = name
-        self.classification = classification
         
         # Types
         self.type1 = type1

@@ -1,6 +1,6 @@
-import csv
-from pokemon import Pokemon
-from move import generate_random_moves  # your move generator
+from battle.move import Move, generate_moves_for_type
+from battle.pokemon import Pokemon
+
 
 class PokemonCSVReader:
     def __init__(self, csv_file_path):
@@ -8,6 +8,7 @@ class PokemonCSVReader:
         self.pokemon_list = []
 
     def load_pokemon(self):
+        import csv
         with open(self.csv_file_path, newline='', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -15,7 +16,6 @@ class PokemonCSVReader:
                 p = Pokemon(
                     pokedex_number=int(row['pokedex_number']),
                     name=row['name'],
-                    classification=row['classification'],
                     type1=row['type1'],
                     type2=row['type2'] or None,
                     hp=int(row['hp']),
@@ -25,12 +25,15 @@ class PokemonCSVReader:
                     sp_defense=int(row['sp_defense']),
                     speed=int(row['speed']),
                     base_total=int(row['base_total']),
-                    abilities=row['abilities'].split(';'),  # or your format
+                    abilities=row['abilities'].split(';'),
                     type_effectiveness={}  # optionally fill from CSV
                 )
 
-                # Generate moves automatically here
-                p.normal_moves, p.special_moves = generate_random_moves(p.type1)
+                # --- Generate moves automatically ---
+                p.moves = []
+                for t in [p.type1, p.type2] if p.type2 else [p.type1]:
+                    normal_move, special_move = generate_moves_for_type(t)
+                    p.moves.extend([normal_move, special_move])
 
                 self.pokemon_list.append(p)
 

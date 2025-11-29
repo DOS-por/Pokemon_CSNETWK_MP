@@ -186,18 +186,15 @@ def create_battle_start(first_player: str) -> ProtocolMessage:
         .set("first_player", first_player)
 
 
-def create_attack(attacker: str, move_type: str, damage: int, 
-                 is_critical: bool = False) -> ProtocolMessage:
-    """Create ATTACK message"""
-    msg = ProtocolMessage(config.MSG_TYPE_ATTACK) \
+def create_attack(attacker: str, move_type: str, damage: int,
+                  turn_number: int, next_turn_player: str) -> ProtocolMessage:
+    return ProtocolMessage(config.MSG_TYPE_ATTACK) \
         .set("attacker", attacker) \
         .set("move_type", move_type) \
-        .set("damage", damage)
-    
-    if is_critical:
-        msg.set("critical", "true")
-    
-    return msg
+        .set("damage", damage) \
+        .set("turn_number", turn_number) \
+        .set("next_turn_player", next_turn_player)
+
 
 
 def create_attack_ack(defender_hp: int) -> ProtocolMessage:
@@ -271,7 +268,7 @@ def validate_message(message: ProtocolMessage) -> tuple[bool, str]:
         config.MSG_TYPE_POKEMON_SELECT: ["pokemon_number", "pokemon_name"],
         config.MSG_TYPE_READY: [],
         config.MSG_TYPE_BATTLE_START: ["first_player"],
-        config.MSG_TYPE_ATTACK: ["attacker", "move_type", "damage"],
+        config.MSG_TYPE_ATTACK: ["attacker", "move_type", "damage", "turn_number", "next_turn_player"],
         config.MSG_TYPE_ATTACK_ACK: ["defender_hp"],
         config.MSG_TYPE_BATTLE_RESULT: ["winner", "loser"],
         config.MSG_TYPE_CHAT_MESSAGE: ["sender", "message"],
