@@ -124,7 +124,7 @@ class Battle:
             return self.player2_name
         return None
     
-    def _switch_turn(self):
+    def switch_turn(self):
         """Switch to the other player's turn"""
         if self.phase == BattlePhase.PLAYER1_TURN:
             self.phase = BattlePhase.PLAYER2_TURN

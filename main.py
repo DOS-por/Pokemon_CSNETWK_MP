@@ -272,9 +272,6 @@ class PokeProtocolClient:
             self.send_message(result_msg)
             self._end_battle(winner)
 
-
-
-
     def _handle_attack_ack(self, message):
         """Handle ATTACK_ACK message"""
         defender_hp = message.get_int("defender_hp")
@@ -359,10 +356,17 @@ class PokeProtocolClient:
             cli.print_error("Cannot create battle: Missing Pokemon")
             return
         
-        self.battle = Battle(
-            self.player_name, self.opponent_name,
-            self.my_pokemon, self.opponent_pokemon
-        )
+        
+        if self.role == config.ROLE_HOST:
+            self.battle = Battle(
+                self.player_name, self.opponent_name,
+                self.my_pokemon, self.opponent_pokemon
+            )
+        elif self.role == config.ROLE_JOINER:
+            self.battle = Battle(
+                self.opponent_name, self.player_name,
+                self.opponent_pokemon, self.my_pokemon 
+            )
     
     def execute_attack(self, move: Move):
         """Execute attack on your turn and send network message"""
@@ -388,9 +392,6 @@ class PokeProtocolClient:
             )
             self.send_message(attack_msg)
 
-
-
-    
     def _end_battle(self, winner: str):
         """End battle"""
         cli.print_battle_result(winner, self.opponent_name if winner == self.player_name else self.player_name)
@@ -409,7 +410,6 @@ class PokeProtocolClient:
         disconnect_msg = create_disconnect(self.player_name, reason)
         self.send_message(disconnect_msg)
         self.running = False
-
 
 def main():
     """Main entry point"""
@@ -459,44 +459,6 @@ def main():
         while client.running and client.state_machine.get_state() != ConnectionState.BATTLE_ACTIVE:
             time.sleep(0.5)
         
-        # Battle loop
-        while client.running and client.battle and client.battle.is_active():
-            cli.print_battle_state(client.battle.get_battle_state())
-            
-            if client.battle.is_player_turn(client.player_name):
-                action = cli.print_menu("Your turn", [
-                    "Attack",
-                    "Chat",
-                    "View Battle Log",
-                    "Forfeit"
-                ])
-                
-                if action == 0:  # Attack
-                    # Show all available moves
-                    moves = client.my_pokemon.moves
-                    move_names = [str(m) for m in moves]  # __str__ gives nice formatting
-                    
-                    move_choice = cli.print_menu("Choose a move", move_names)
-                    chosen_move = moves[move_choice]
-                    
-                    # Execute attack using the chosen move's type
-                    client.execute_attack(chosen_move)
-                    time.sleep(1)
-                elif action == 1:  # Chat
-                    msg = cli.get_user_input("Message")
-                    client.send_chat(msg)
-                elif action == 2:  # Battle log
-                    if client.battle:
-                        cli.print_battle_log(client.battle.get_battle_log())
-                        cli.pause()
-                elif action == 3:  # Forfeit
-                    if cli.confirm_action("Are you sure you want to forfeit?"):
-                        client.disconnect("FORFEIT")
-                        break
-            else:
-                cli.print_waiting(f"Waiting for {client.opponent_name}'s turn...")
-                time.sleep(1)
-        
     else:  # JOINER
         peer_host = cli.get_user_input("Enter host IP")
         peer_port = cli.get_number_input("Enter host port", 1024, 65535)
@@ -529,42 +491,44 @@ def main():
         # Wait for battle to start
         while client.running and client.state_machine.get_state() != ConnectionState.BATTLE_ACTIVE:
             time.sleep(0.5)
+    
+    # Battle loop
+    while client.running and client.battle and client.battle.is_active():
+        cli.print_battle_state(client.battle.get_battle_state())
         
-        # Battle loop (same as host)
-        while client.running and client.battle and client.battle.is_active():
-            cli.print_battle_state(client.battle.get_battle_state())
+        if client.battle.is_player_turn(client.player_name):
+            action = cli.print_menu("Your turn", [
+                "Attack",
+                "Chat",
+                "View Battle Log",
+                "Forfeit"
+            ])
             
-            if client.battle.is_player_turn(client.player_name):
-                action = cli.print_menu("Your turn", [
-                    "Attack",
-                    "Chat",
-                    "View Battle Log",
-                    "Forfeit"
-                ])
+            if action == 0:  # Attack
+                # Show all available moves
+                moves = client.my_pokemon.moves
+                move_names = [str(m) for m in moves]  # __str__ gives nice formatting
                 
-                if action == 0:  # Attack
-                    moves = client.my_pokemon.moves
-                    move_names = [str(m) for m in moves]
-                    move_choice = cli.print_menu("Choose a move", move_names)
-                    chosen_move = moves[move_choice]
-
-                    # Pass the Move object directly
-                    client.execute_attack(chosen_move)
-                    time.sleep(1)
-                elif action == 1:
-                    msg = cli.get_user_input("Message")
-                    client.send_chat(msg)
-                elif action == 2:
-                    if client.battle:
-                        cli.print_battle_log(client.battle.get_battle_log())
-                        cli.pause()
-                elif action == 3:
-                    if cli.confirm_action("Are you sure you want to forfeit?"):
-                        client.disconnect("FORFEIT")
-                        break
-            else:
-                cli.print_waiting(f"Waiting for {client.opponent_name}'s turn...")
-                time.sleep(1)
+                move_choice = cli.print_menu("Choose a move", move_names)
+                chosen_move = moves[move_choice]
+                
+                # Execute attack using the chosen move
+                client.execute_attack(chosen_move)
+                client.battle.switch_turn()
+            elif action == 1:  # Chat
+                msg = cli.get_user_input("Message")
+                client.send_chat(msg)
+            elif action == 2:  # Battle log
+                if client.battle:
+                    cli.print_battle_log(client.battle.get_battle_log())
+                    cli.pause()
+            elif action == 3:  # Forfeit
+                if cli.confirm_action("Are you sure you want to forfeit?"):
+                    client.disconnect("FORFEIT")
+                    break
+        else:
+            cli.print_waiting(f"Waiting for {client.opponent_name}'s turn...")
+            time.sleep(1)
     
     cli.print_goodbye()
     client.stop()
