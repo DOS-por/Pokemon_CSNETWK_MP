@@ -291,9 +291,7 @@ class PokeProtocolClient:
     def _handle_battle_result(self, message):
         """Handle BATTLE_RESULT message"""
         winner = message.get("winner")
-        loser = message.get("loser")
-        
-        cli.print_battle_result(winner, loser)
+   
         self.state_machine.transition(ConnectionState.BATTLE_ENDED, f"{winner} wins!")
     
     def _handle_chat_message(self, message):
