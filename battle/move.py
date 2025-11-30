@@ -19,10 +19,17 @@ class Move:
         return f"{self.name} ({self.category}, {self.move_type}) | Power: {self.power}, Uses: {self.current_uses}/{self.max_uses}"
 
 
-def generate_moves_for_type(pokemon_type: str):
+def generate_moves_for_type(pokemon_type: str, attack: int, sp_attack: int):
     """
-    Generate one normal and one special move for a given type.
+    Generate one physical and one special move for a given type.
     """
-    normal_move = Move(name=f"{pokemon_type} Strike", category="normal", move_type=pokemon_type, power=60)
-    special_move = Move(name=f"{pokemon_type} Blast", category="special", move_type=pokemon_type, power=60)
-    return normal_move, special_move
+
+    if attack >= sp_attack:
+        physical = 80
+        special = 60
+    else:
+        physical = 60
+        special = 80
+    physical = Move(name=f"{pokemon_type} Strike", category="physical", move_type=pokemon_type, power=physical)
+    special_move = Move(name=f"{pokemon_type} Blast", category="special", move_type=pokemon_type, power=special)
+    return physical, special_move

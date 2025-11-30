@@ -26,14 +26,14 @@ class PokemonCSVReader:
                     speed=int(row['speed']),
                     base_total=int(row['base_total']),
                     abilities=row['abilities'].split(';'),
-                    type_effectiveness={}  # optionally fill from CSV
+                    type_effectiveness={}
                 )
 
                 # --- Generate moves automatically ---
                 p.moves = []
                 for t in [p.type1, p.type2] if p.type2 else [p.type1]:
-                    normal_move, special_move = generate_moves_for_type(t)
-                    p.moves.extend([normal_move, special_move])
+                    physical_move, special_move = generate_moves_for_type(t, p.attack, p.sp_attack)
+                    p.moves.extend([physical_move, special_move])
 
                 self.pokemon_list.append(p)
 

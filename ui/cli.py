@@ -129,7 +129,7 @@ def print_pokemon_selection(pokemon_list):
     
     for i, pokemon in enumerate(pokemon_list, 1):
         types = f"{pokemon.type1}/{pokemon.type2}" if pokemon.type2 else pokemon.type1
-        print(f"{i}. {pokemon.name} ({types}) - HP: {pokemon.hp}, ATK: {pokemon.attack}, DEF: {pokemon.defense}, SPD: {pokemon.speed}")
+        print(f"{i}. {pokemon.name} ({types}) - HP: {pokemon.hp}, ATK: {pokemon.attack}, DEF: {pokemon.defense}, SPATK: {pokemon.sp_attack}, SPDEF: {pokemon.sp_defense},SPEED: {pokemon.speed}")
 
 
 def get_user_input(prompt: str, valid_options: Optional[list] = None) -> str:

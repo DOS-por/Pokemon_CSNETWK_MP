@@ -1,3 +1,4 @@
+import math
 from battle.move import Move
 
 def is_move_special(move_type: str) -> bool:
@@ -38,8 +39,7 @@ def format_effectiveness(multiplier: float) -> str:
 def calculate_damage(attacker, defender, move: Move):
     level = 50
 
-    # Decide category automatically
-    category = "special" if is_move_special(move.move_type) else "normal"
+    category = move.category
 
     if category == "special":
         base_attack = attacker.sp_attack
@@ -63,4 +63,4 @@ def calculate_damage(attacker, defender, move: Move):
     effectiveness = get_type_effectiveness(move.move_type, defender)
     base_damage *= effectiveness
 
-    return max(1, int(base_damage))
+    return math.floor(base_damage)

@@ -8,7 +8,6 @@ import time
 import threading
 from typing import Optional
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
@@ -24,7 +23,7 @@ from protocol.messages import (
 from protocol.state_machine import StateMachine, ConnectionState
 from battle.database import PokemonDatabase
 from battle.pokemon import Pokemon
-from battle.battle_logic import Battle, BattleOutcome
+from battle.battle_logic import Battle, BattlePhase
 from battle.move import Move
 from chat.chat_handler import ChatHandler
 from ui import cli
@@ -234,27 +233,32 @@ class PokeProtocolClient:
         cli.print_success(f"Battle started! {first_player} goes first")
     
     def _handle_attack(self, message):
-        """Handle ATTACK message"""
         attacker = message.get("attacker")
-        move_type = message.get("move_type")
+        move = message.get("move")
         damage = message.get_int("damage")
-        
+        next_turn_player = message.get("next_turn_player")
+        turn_number = message.get_int("turn_number")
+
         if self.battle:
-            # Apply damage to my Pokemon
             self.my_pokemon.take_damage(damage)
-            
-            cli.print_info(f"{attacker} attacked with {move_type} for {damage} damage!")
-            
+            cli.print_info(f"{attacker} attacked with {move} for {damage} damage!")
+
+            # Sync turn state
+            self.battle.turn_count = turn_number
+            if next_turn_player == self.battle.player1_name:
+                self.battle.phase = BattlePhase.PLAYER1_TURN
+            else:
+                self.battle.phase = BattlePhase.PLAYER2_TURN
+
             # Send ACK
-            ack = create_attack_ack(self.my_pokemon.current_hp)
+            ack = create_attack_ack(self.my_pokemon.current_hp, sender=self.player_name)
             self.send_message(ack)
-            
-            # Check if I lost
+
             if self.my_pokemon.is_fainted():
                 result_msg = create_battle_result(self.opponent_name, self.player_name)
                 self.send_message(result_msg)
                 self._end_battle(self.opponent_name)
-    
+
     def _handle_attack_ack(self, message):
         """Handle ATTACK_ACK message"""
         defender_hp = message.get_int("defender_hp")
@@ -363,9 +367,9 @@ class PokeProtocolClient:
             # Send ATTACK message with all required fields
             attack_msg = create_attack(
                 attacker=self.player_name,
-                move_type=move.move_type,
+                move=move,
                 damage=result['damage'],
-                turn_number=self.battle.turn_count + 1,
+                turn_number=self.battle.turn_count,
                 next_turn_player=next_turn_player
             )
             self.send_message(attack_msg)

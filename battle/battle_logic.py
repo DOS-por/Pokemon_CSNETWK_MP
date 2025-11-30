@@ -5,7 +5,7 @@ Handles turn-based battle flow, HP management, and win conditions
 from typing import Optional
 from enum import Enum
 from .pokemon import Pokemon
-from .damage import calculate_damage   # <-- import the unified function
+from .damage import calculate_damage  
 from .move import Move
 
 class BattlePhase(Enum):

@@ -4,7 +4,7 @@ Messages follow key: value\n format as per PokeProtocol RFC
 """
 from typing import Dict, Optional, Any
 import config
-
+from battle.move import Move
 
 class ProtocolMessage:
     """Represents a protocol message with key-value pairs"""
@@ -186,23 +186,21 @@ def create_battle_start(first_player: str) -> ProtocolMessage:
         .set("first_player", first_player)
 
 
-def create_attack(attacker: str, move_type: str, damage: int,
+# protocol/messages.py
+def create_attack(attacker: str, move: Move, damage: int,
                   turn_number: int, next_turn_player: str) -> ProtocolMessage:
     return ProtocolMessage(config.MSG_TYPE_ATTACK) \
         .set("attacker", attacker) \
-        .set("move_type", move_type) \
+        .set("move_name", move.name) \
+        .set("move_type", move.move_type) \
         .set("damage", damage) \
         .set("turn_number", turn_number) \
         .set("next_turn_player", next_turn_player)
 
-
-
-def create_attack_ack(defender_hp: int) -> ProtocolMessage:
-    """Create ATTACK_ACK message"""
+def create_attack_ack(defender_hp: int, sender: str) -> ProtocolMessage:
     return ProtocolMessage(config.MSG_TYPE_ATTACK_ACK) \
         .set("defender_hp", defender_hp) \
-        .set("status", "OK")
-
+        .set("sender", sender)
 
 def create_battle_result(winner: str, loser: str) -> ProtocolMessage:
     """Create BATTLE_RESULT message"""

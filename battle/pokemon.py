@@ -42,8 +42,8 @@ class Pokemon:
         self.type_effectiveness = type_effectiveness
 
         # ----- Move Slots -----
-        self.normal_moves = []   # 2 random normal moves
-        self.special_moves = []  # 2 random special moves
+        self.physical_moves = []   
+        self.special_moves = []  
     
     
     # ----- Battle Utility Methods -----
@@ -71,4 +71,4 @@ class Pokemon:
         type_str = f"{self.type1}/{self.type2}" if self.type2 else self.type1
         return (f"{self.name} (#{self.pokedex_number}) - {type_str}\n"
                 f"HP: {self.current_hp}/{self.max_hp} | "
-                f"ATK: {self.attack} | DEF: {self.defense} | SPD: {self.speed}")
+                f"ATK: {self.attack} | DEF: {self.defense} | SPATK: {self.sp_attack} |SPDEF: {self.sp_defense}")
