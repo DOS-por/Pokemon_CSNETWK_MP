@@ -52,7 +52,7 @@ def calculate_damage(attacker, defender, move: Move):
         base_defense = 1
 
     # Base damage formula
-    base_damage = ((2 * level / 5 + 2) * move.power * base_attack / base_defense / 50 + 2)
+    base_damage = ((2 * level / 5 + 2) * move.power * (base_attack / base_defense)) / 50 + 2
 
     # STAB
     if move.move_type and (move.move_type.lower() == attacker.type1.lower() or
