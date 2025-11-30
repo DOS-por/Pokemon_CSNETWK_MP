@@ -60,11 +60,13 @@ class Battle:
         self.log(f"{self.first_player} will go first!")
     
     def execute_attack(self, attacker_name: str, move: Move) -> dict:
-        # Validate it's the attacker's turn
+        """Execute an attack and return the result with turn sync info"""
+        
+        # Validate turn
         if not self.is_player_turn(attacker_name):
             return {'success': False, 'error': 'Not your turn'}
 
-        # Get attacker and defender
+        # Determine attacker and defender
         if attacker_name == self.player1_name:
             attacker_pokemon = self.player1_pokemon
             defender_pokemon = self.player2_pokemon
@@ -74,19 +76,22 @@ class Battle:
             defender_pokemon = self.player1_pokemon
             defender_name = self.player1_name
 
+        # Calculate damage
         damage = calculate_damage(attacker_pokemon, defender_pokemon, move)
         actual_damage = defender_pokemon.take_damage(damage)
 
-        # Log attack
+        # Log messages
         self.log(f"{attacker_name}'s {attacker_pokemon.name} used {move.name} attack!")
         self.log(f"{defender_name}'s {defender_pokemon.name} took {actual_damage} damage!")
         self.log(f"{defender_pokemon.name} HP: {defender_pokemon.current_hp}/{defender_pokemon.max_hp}")
 
-        # Increment turn counter and switch turns
+        # Increment turn count
         self.turn_count += 1
-        self._switch_turn()
 
-        # Check outcome
+        # Determine next player (do NOT switch phase here; just tell the other client)
+        next_turn_player = self.player1_name if attacker_name == self.player2_name else self.player2_name
+
+        # Check battle outcome
         outcome = self.check_outcome()
 
         return {
@@ -97,8 +102,11 @@ class Battle:
             'attacker': attacker_name,
             'defender': defender_name,
             'move_type': move.move_type,
-            'outcome': outcome
+            'outcome': outcome,
+            'next_turn_player': next_turn_player,  # crucial for syncing
+            'turn_number': self.turn_count
         }
+
     
     def is_player_turn(self, player_name: str) -> bool:
         """Check if it's the specified player's turn"""
