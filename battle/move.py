@@ -25,11 +25,11 @@ def generate_moves_for_type(pokemon_type: str, attack: int, sp_attack: int):
     """
 
     if attack >= sp_attack:
-        physical = 60
-        special = 40
+        physical =  50
+        special = 30
     else:
-        physical = 40
-        special = 60
+        physical = 30
+        special = 50
     physical = Move(name=f"{pokemon_type} Strike", category="physical", move_type=pokemon_type, power=physical)
     special_move = Move(name=f"{pokemon_type} Blast", category="special", move_type=pokemon_type, power=special)
     return physical, special_move
