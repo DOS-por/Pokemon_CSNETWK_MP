@@ -38,7 +38,7 @@ class ReliabilityLayer:
         self.sequence_lock = threading.Lock()
         
         # Pending messages waiting for ACK
-        self.pending_messages: Dict[int, PendingMessage] = {}
+        self.pending_messages: Dict[Tuple[int, Tuple[str, int]], PendingMessage] = {}
         self.pending_lock = threading.Lock()
         
         # Received sequence numbers (for duplicate detection)
@@ -104,13 +104,12 @@ class ReliabilityLayer:
         if success:
             # Store in pending messages for retransmission
             with self.pending_lock:
-                self.pending_messages[sequence] = PendingMessage(
+                self.pending_messages[(sequence, address)] = PendingMessage(
                     sequence=sequence,
                     data=message_with_seq,
                     address=address,
                     sent_time=time.time()
                 )
-            
             if config.DEBUG_MODE:
                 print(f"[RELIABILITY] Sent message with seq={sequence}")
         
@@ -166,25 +165,27 @@ class ReliabilityLayer:
             
             if is_ack:
                 # This is an ACK message
-                self._handle_ack(sequence)
+                self._handle_ack(sequence, address)
                 if self.ack_callback:
                     self.ack_callback(sequence, address)
                 return True
             
             # Check for duplicate
             with self.received_lock:
-                if sequence in self.received_sequences:
+                key = (sequence, address)
+                if key in self.received_sequences:
                     # Duplicate message, send ACK but don't process
                     self.send_ack(sequence, address)
                     if config.DEBUG_MODE:
-                        print(f"[RELIABILITY] Duplicate message seq={sequence}")
+                        print(f"[RELIABILITY] Duplicate message seq={sequence} from {address}")
                     return False
-                
+
                 # New message, add to received set
-                self.received_sequences.add(sequence)
-                
+                self.received_sequences.add(key)
+
                 # Keep only recent sequences (prevent memory leak)
-                if len(self.received_sequences) > 1000:
+                if len(self.received_sequences) > 5000:
+                    # Optionally prune oldest; simplest: clear
                     self.received_sequences.clear()
             
             # Send ACK
@@ -200,11 +201,12 @@ class ReliabilityLayer:
             print(f"[ERROR] Error handling received message: {e}")
             return False
     
-    def _handle_ack(self, sequence: int):
+    def _handle_ack(self, sequence: int, address: Tuple[str, int]):
         """Handle received ACK by removing from pending messages"""
         with self.pending_lock:
-            if sequence in self.pending_messages:
-                del self.pending_messages[sequence]
+            key = (sequence, address)
+            if key in self.pending_messages:
+                del self.pending_messages[key]
                 if config.DEBUG_MODE:
                     print(f"[RELIABILITY] Received ACK for seq={sequence}")
     
@@ -212,40 +214,43 @@ class ReliabilityLayer:
         """Background loop to retransmit unacknowledged messages"""
         while self.running:
             time.sleep(0.5)  # Check every 500ms
-            
+
             current_time = time.time()
             to_retransmit = []
             to_remove = []
-            
+
             with self.pending_lock:
-                for seq, msg in list(self.pending_messages.items()):
+                for key, msg in list(self.pending_messages.items()):
+                    # key is (seq, addr)
                     elapsed = current_time - msg.sent_time
-                    
+
                     if elapsed > config.ACK_TIMEOUT:
                         if msg.retries < config.MAX_RETRIES:
-                            # Retransmit
-                            to_retransmit.append(msg)
+                            to_retransmit.append(key)  # queue by key
                         else:
-                            # Max retries reached, give up
-                            to_remove.append(seq)
-                            print(f"[WARNING] Message seq={seq} failed after {config.MAX_RETRIES} retries")
-            
+                            to_remove.append(key)  # remove by key
+                            print(f"[WARNING] Message seq={msg.sequence} to {msg.address} failed after {config.MAX_RETRIES} retries")
+
             # Retransmit outside of lock
-            for msg in to_retransmit:
+            for key in to_retransmit:
+                with self.pending_lock:
+                    msg = self.pending_messages.get(key)
+                if not msg:
+                    continue
                 self.send_callback(msg.data, msg.address)
                 with self.pending_lock:
-                    if msg.sequence in self.pending_messages:
-                        self.pending_messages[msg.sequence].sent_time = current_time
-                        self.pending_messages[msg.sequence].retries += 1
-                
+                    # Update the same keyed entry
+                    if key in self.pending_messages:
+                        self.pending_messages[key].sent_time = current_time
+                        self.pending_messages[key].retries += 1
                 if config.DEBUG_MODE:
-                    print(f"[RELIABILITY] Retransmitted seq={msg.sequence} (retry {msg.retries + 1})")
-            
+                    print(f"[RELIABILITY] Retransmitted seq={msg.sequence} to {msg.address} (retry {msg.retries + 1})")
+
             # Remove failed messages
             with self.pending_lock:
-                for seq in to_remove:
-                    if seq in self.pending_messages:
-                        del self.pending_messages[seq]
+                for key in to_remove:
+                    if key in self.pending_messages:
+                        del self.pending_messages[key]
     
     def set_message_callback(self, callback: Callable[[bytes, Tuple[str, int]], None]):
         """Set callback for received messages"""

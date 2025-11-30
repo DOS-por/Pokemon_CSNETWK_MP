@@ -4,6 +4,7 @@ Messages follow key: value\n format as per PokeProtocol RFC
 """
 from typing import Dict, Optional, Any
 import config
+import json
 from battle.move import Move
 
 class ProtocolMessage:
@@ -214,6 +215,10 @@ def create_battle_end(reason: str = "NORMAL") -> ProtocolMessage:
     return ProtocolMessage(config.MSG_TYPE_BATTLE_END) \
         .set("reason", reason)
 
+def create_battle_state(state: dict):
+    msg = ProtocolMessage(config.MSG_TYPE_BATTLE_STATE)
+    msg.fields["battle_state"] = json.dumps(state)  # encode dict as string
+    return msg
 
 def create_chat_message(sender: str, message: str, 
                        sticker: Optional[str] = None) -> ProtocolMessage:
