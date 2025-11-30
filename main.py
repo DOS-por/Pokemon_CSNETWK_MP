@@ -529,6 +529,10 @@ def main():
         else:
             cli.print_waiting(f"Waiting for {client.opponent_name}'s turn...")
             time.sleep(1)
+
+    # Check if the result has been processed on a previous network tick
+        if client.state_machine.get_state() == ConnectionState.BATTLE_ENDED:
+            break  # Exit the loop immediately to preserve the final result printout
     
     cli.print_goodbye()
     client.stop()
