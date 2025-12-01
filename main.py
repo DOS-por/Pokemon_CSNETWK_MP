@@ -35,18 +35,36 @@ class PokeProtocolClient:
     """Main client for PokeProtocol"""
     
     def __init__(self, player_name: str, role: str):
+        """
+        Initialize client
+        
+        Args:
+            player_name: Player's name
+            role: HOST, JOINER, or SPECTATOR
+        """
         self.player_name = player_name
         self.role = role
         self.running = False
+        
+        # Network components
         self.udp_client: Optional[UDPClient] = None
         self.reliability: Optional[ReliabilityLayer] = None
+        
+        # Protocol components
         self.state_machine = StateMachine()
         self.chat_handler = ChatHandler()
+        
+        # Game data
         self.pokemon_db: Optional[PokemonDatabase] = None
         self.my_pokemon: Optional[Pokemon] = None
         self.opponent_pokemon: Optional[Pokemon] = None
         self.opponent_name: Optional[str] = None
         self.battle: Optional[Battle] = None
+        
+        # Input thread
+        self.input_thread: Optional[threading.Thread] = None
+        self.input_lock = threading.Lock()
+
         self.spectators = []  # List of (host, port) tuples
         self.is_spectator = (role == config.ROLE_SPECTATOR)
     
@@ -175,20 +193,40 @@ class PokeProtocolClient:
 
 
     def _handle_hello(self, message, address):
+        """Handle HELLO message from either a joiner or a spectator"""
+
         role = message.get("role")
+
         if role == config.ROLE_SPECTATOR:
+            # Add spectator to the list (don’t overwrite peer slot)
             if address not in self.spectators:
                 self.spectators.append(address)
+
+            # Send ACK back to spectator
             ack = create_hello_ack(self.player_name)
             self.reliability.send_reliable(ack.encode(), address)
             cli.print_info(f"Spectator connected: {address}")
+
+            # Optionally sync them with current battle state
             if self.battle:
                 state_msg = create_battle_state(self.battle.get_battle_state())
                 self.reliability.send_reliable(state_msg.encode(), address)
-            # Forward spectator info to joiner
-            if self.opponent_name:
-                forward_msg = create_chat_message("SYSTEM", f"SPECTATOR:{address[0]}:{address[1]}")
-                self.send_message(forward_msg)
+
+        elif role in (config.ROLE_HOST, config.ROLE_JOINER):
+            # Handle normal opponent (only one joiner allowed)
+            if not self.opponent_name:
+                self.opponent_name = message.get("player_name")
+                self.udp_client.set_peer(address[0], address[1])
+
+                # Send HELLO_ACK back to opponent
+                ack = create_hello_ack(self.player_name)
+                self.send_message(ack)
+
+                self.state_machine.transition(ConnectionState.CONNECTED,
+                                            f"Connected to {self.opponent_name}")
+                cli.print_success(f"Connected to {self.opponent_name}")
+            else:
+                cli.print_info(f"Ignored extra joiner attempt from {address}")
     
     def _handle_hello_ack(self, message):
         """Handle HELLO_ACK message"""
@@ -308,22 +346,6 @@ class PokeProtocolClient:
             self.send_message(result_msg)
             self._end_battle(self.player_name)
 
-    def start_spectator_chat(self):
-        def chat_loop():
-            while self.running and self.is_spectator:
-                msg = cli.get_user_input("Spectator chat (/chat <msg>, /quit)")
-                if msg.strip().lower() == "/quit":
-                    self.disconnect("USER_QUIT")
-                    break
-                elif msg.strip().lower().startswith("/chat"):
-                    chat_text = msg.strip()[len("/chat"):].strip()
-                    if chat_text:
-                        self.send_chat(chat_text)
-                else:
-                    cli.print_error("Spectators can only use /chat or /quit")
-        threading.Thread(target=chat_loop, daemon=True).start()
-
-
     
     def _handle_battle_result(self, message):
         """Handle BATTLE_RESULT message"""
@@ -332,23 +354,14 @@ class PokeProtocolClient:
         self.state_machine.transition(ConnectionState.BATTLE_ENDED, f"{winner} wins!")
     
     def _handle_chat_message(self, message):
+        """Handle CHAT_MESSAGE"""
         sender = message.get("sender")
         text = message.get("message")
         sticker = message.get("sticker") if message.get("sticker") else None
-        # Special system message to sync spectators
-        if sender == "SYSTEM" and text.startswith("SPECTATOR:"):
-            parts = text.split(":")
-            if len(parts) == 3:
-                host, port = parts[1], int(parts[2])
-                addr = (host, port)
-                if addr not in self.spectators:
-                    self.spectators.append(addr)
-                    cli.print_info(f"Spectator synced: {addr}")
-            return
-        # Normal chat
+        
         chat_msg = self.chat_handler.receive_message(sender, text, sticker)
         print(f"\n{chat_msg}")
-
+    
     def _handle_disconnect(self, message):
         """Handle DISCONNECT message"""
         player = message.get("player_name")
@@ -452,14 +465,12 @@ class PokeProtocolClient:
         self.send_to_spectators(state_msg)
     
     def send_chat(self, message: str, sticker: str = None):
+        """Send chat message"""
         chat_msg = create_chat_message(self.player_name, message, sticker)
-        # Send to opponent
         self.send_message(chat_msg)
-        # Send to spectators
-        self.send_to_spectators(chat_msg)
+        
         # Log locally
         self.chat_handler.send_message(self.player_name, message, sticker)
-
     
     def disconnect(self, reason: str = "USER_QUIT"):
         """Send disconnect message"""
@@ -495,21 +506,26 @@ def main():
         cli.print_connection_info(role, config.DEFAULT_HOST, port)
         client.wait_for_connection()
         
+        # Wait for connection
         while client.running and client.state_machine.get_state() == ConnectionState.CONNECTING:
             time.sleep(0.5)
+        
         if not client.running:
             return
         
+        # Pokemon selection
         client.select_pokemon()
         cli.print_waiting("Waiting for opponent to select Pokemon...")
         while client.running and not client.opponent_pokemon:
             time.sleep(0.5)
         
         client.send_ready()
+        
+        # Wait for battle to start
         while client.running and client.state_machine.get_state() != ConnectionState.BATTLE_ACTIVE:
             time.sleep(0.5)
 
-    elif role == config.ROLE_JOINER:
+    elif role == config.ROLE_JOINER:  # JOINER
         peer_host = cli.get_user_input("Enter host IP")
         peer_port = cli.get_number_input("Enter host port", 1024, 65535)
         local_port = cli.get_number_input("Enter your local port", 1024, 65535)
@@ -522,17 +538,23 @@ def main():
         cli.print_connection_info(role, config.DEFAULT_HOST, local_port, peer_host, peer_port)
         client.connect_to_peer(peer_host, peer_port)
         
+        # Wait for connection
         while client.running and client.state_machine.get_state() == ConnectionState.CONNECTING:
             time.sleep(0.5)
+        
         if not client.running:
             return
         
+        # Pokemon selection
         client.select_pokemon()
         cli.print_waiting("Waiting for opponent to select Pokemon...")
+        
         while client.running and not client.opponent_pokemon:
             time.sleep(0.5)
         
         client.send_ready()
+        
+        # Wait for battle to start
         while client.running and client.state_machine.get_state() != ConnectionState.BATTLE_ACTIVE:
             time.sleep(0.5)
 
@@ -549,64 +571,65 @@ def main():
         cli.print_connection_info(role, config.DEFAULT_HOST, local_port, peer_host, peer_port)
         client.connect_to_peer(peer_host, peer_port)
         
+        # Wait for connection
         while client.running and client.state_machine.get_state() == ConnectionState.CONNECTING:
             time.sleep(0.5)
+        
         if not client.running:
             return
+        
         
         while client.running and not client.opponent_pokemon:
             time.sleep(0.5)
         
+        #client.send_ready()
+        
+        # Wait for battle to start
         while client.running and client.state_machine.get_state() != ConnectionState.BATTLE_ACTIVE:
             time.sleep(0.5)
-        
-        # Start spectator chat loop
-        client.start_spectator_chat()
-
+    
     # Battle loop
     while client.running and client.battle and client.battle.is_active():
         cli.print_battle_state(client.battle.get_battle_state())
-
-        if client.is_spectator:
-            time.sleep(1)  # spectators just watch; chat handled in separate thread
+        
+        if client.battle.is_player_turn(client.player_name):
+            action = cli.print_menu("Your turn", [
+                "Attack",
+                "Chat",
+                "View Battle Log",
+                "Forfeit"
+            ])
+            
+            if action == 0:  # Attack
+                # Show all available moves
+                moves = client.my_pokemon.moves
+                move_names = [str(m) for m in moves]  # __str__ gives nice formatting
+                
+                move_choice = cli.print_menu("Choose a move", move_names)
+                chosen_move = moves[move_choice]
+                
+                # Execute attack using the chosen move
+                client.execute_attack(chosen_move)
+                client.battle.switch_turn()
+            elif action == 1:  # Chat
+                msg = cli.get_user_input("Message")
+                client.send_chat(msg)
+            elif action == 2:  # Battle log
+                if client.battle:
+                    cli.print_battle_log(client.battle.get_battle_log())
+                    cli.pause()
+            elif action == 3:  # Forfeit
+                if cli.confirm_action("Are you sure you want to forfeit?"):
+                    client.disconnect("FORFEIT")
+                    break
         else:
-            if client.battle.is_player_turn(client.player_name):
-                while True:
-                    user_input = cli.get_user_input("Enter option number or /chat <msg>")
-                    if user_input.isdigit():
-                        action = int(user_input)
-                        if action == 0:  # Attack
-                            moves = client.my_pokemon.moves
-                            move_names = [str(m) for m in moves]
-                            move_choice = cli.print_menu("Choose a move", move_names)
-                            chosen_move = moves[move_choice]
-                            client.execute_attack(chosen_move)
-                        elif action == 1:  # Battle log
-                            cli.print_battle_log(client.battle.get_battle_log())
-                            cli.pause()
-                        elif action == 2:  # Forfeit
-                            if cli.confirm_action("Are you sure you want to forfeit?"):
-                                client.disconnect("FORFEIT")
-                                break
-                        else:
-                            cli.print_error("Invalid option")
-                        break  # exit after valid action
-                    elif user_input.strip().lower().startswith("/chat"):
-                        chat_text = user_input.strip()[len("/chat"):].strip()
-                        if chat_text:
-                            client.send_chat(chat_text)
-                        else:
-                            cli.print_error("Empty chat message")
-                        # loop again, still your turn
-                    else:
-                        cli.print_error("Invalid input. Use a number or /chat <msg>")
-            else:
-                cli.print_waiting(f"Waiting for {client.opponent_name}'s turn...")
-                time.sleep(1)
+            cli.print_waiting(f"Waiting for {client.opponent_name}'s turn...")
+            time.sleep(1)
 
+    # Check if the result has been processed on a previous network tick
         if client.state_machine.get_state() == ConnectionState.BATTLE_ENDED:
-            break
-
+            break  # Exit the loop immediately to preserve the final result printout
+    
     cli.print_goodbye()
     client.stop()
 
