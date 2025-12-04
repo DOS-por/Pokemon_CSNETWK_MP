@@ -28,6 +28,7 @@ from battle.pokemon import Pokemon
 from battle.battle_logic import Battle, BattlePhase
 from battle.move import Move
 from chat.chat_handler import ChatHandler
+from chat.async_chat import AsyncChatManager, ChatMessage as AsyncChatMessage
 from ui import cli
 
 
@@ -53,6 +54,7 @@ class PokeProtocolClient:
         # Protocol components
         self.state_machine = StateMachine()
         self.chat_handler = ChatHandler()
+        self.async_chat: Optional[AsyncChatManager] = None
         
         # Game data
         self.pokemon_db: Optional[PokemonDatabase] = None
@@ -90,6 +92,11 @@ class PokeProtocolClient:
             # Start receiving
             self.udp_client.start_receiving(self.reliability.handle_received)
             
+            # Start async chat manager
+            self.async_chat = AsyncChatManager(self.player_name, self._send_chat_reliable)
+            self.async_chat.set_message_callback(self._handle_async_chat_message)
+            self.async_chat.start()
+            
             self.running = True
             cli.print_success(f"Client started on {host}:{port}")
             
@@ -102,6 +109,9 @@ class PokeProtocolClient:
     def stop(self):
         """Stop the client"""
         self.running = False
+        
+        if self.async_chat:
+            self.async_chat.stop()
         
         if self.reliability:
             self.reliability.stop()
@@ -136,6 +146,20 @@ class PokeProtocolClient:
         self.reliability.send_reliable(data, self.udp_client.peer_address)
         return True
     
+    def _send_chat_reliable(self, data: bytes, address):
+        """Send chat message to all peers (opponent + spectators)"""
+        # Send to opponent if connected
+        if self.udp_client and self.udp_client.peer_address:
+            seq = self.reliability.send_reliable(data, self.udp_client.peer_address)
+        else:
+            seq = self.reliability.get_next_sequence()
+        
+        # Send to all spectators
+        for spectator_addr in self.spectators:
+            self.reliability.send_reliable(data, spectator_addr, sequence=seq)
+        
+        return seq
+    
     def send_to_spectators(self, message):
         data = message.encode()
         for spectator_addr in self.spectators:
@@ -144,6 +168,18 @@ class PokeProtocolClient:
 
     def _handle_message(self, data: bytes, address: tuple):
         """Handle received message"""
+        # Check if this is an async chat message first
+        try:
+            decoded = data.decode('utf-8', errors='ignore')
+            if 'message_type: CHAT_MESSAGE' in decoded:
+                # Route to async chat manager
+                if self.async_chat:
+                    self.async_chat.handle_received_data(data, address)
+                return
+        except:
+            pass
+        
+        # Otherwise, handle as protocol message
         message = decode_message(data)
         if not message:
             return
@@ -354,13 +390,25 @@ class PokeProtocolClient:
         self.state_machine.transition(ConnectionState.BATTLE_ENDED, f"{winner} wins!")
     
     def _handle_chat_message(self, message):
-        """Handle CHAT_MESSAGE"""
+        """Handle CHAT_MESSAGE (old protocol)"""
         sender = message.get("sender")
         text = message.get("message")
         sticker = message.get("sticker") if message.get("sticker") else None
         
+        # Just log it, the battle loop will display it
         chat_msg = self.chat_handler.receive_message(sender, text, sticker)
-        print(f"\n{chat_msg}")
+    
+    def _handle_async_chat_message(self, chat_msg: AsyncChatMessage):
+        """Handle async chat message (new system)"""
+        # Log to old chat handler for backwards compatibility
+        from chat.async_chat import ChatContentType
+        
+        if chat_msg.content_type == ChatContentType.TEXT:
+            self.chat_handler.receive_message(chat_msg.sender_name, chat_msg.message_text, None)
+        elif chat_msg.content_type == ChatContentType.STICKER:
+            # For stickers, store a reference
+            self.chat_handler.receive_message(chat_msg.sender_name, 
+                                             f"[Sticker: sticker_{chat_msg.sequence_number}.png]", None)
     
     def _handle_disconnect(self, message):
         """Handle DISCONNECT message"""
@@ -468,9 +516,7 @@ class PokeProtocolClient:
         """Send chat message"""
         chat_msg = create_chat_message(self.player_name, message, sticker)
         self.send_message(chat_msg)
-        
-        # Log locally
-        self.chat_handler.send_message(self.player_name, message, sticker)
+        # Note: Message is logged locally in the battle loop after sending
     
     def disconnect(self, reason: str = "USER_QUIT"):
         """Send disconnect message"""
@@ -592,6 +638,22 @@ def main():
     while client.running and client.battle and client.battle.is_active():
         cli.print_battle_state(client.battle.get_battle_state())
         
+        # Display chat history
+        chat_messages = client.chat_handler.get_messages()
+        if chat_messages:
+            print("\n" + "─" * 60)
+            print("  CHAT HISTORY")
+            print("─" * 60)
+            # Show last 10 messages
+            for msg in chat_messages[-10:]:
+                print(f"  {msg}")
+        
+        # Spectators just watch
+        if client.is_spectator:
+            print("\n[Spectator Mode] Press Enter to refresh or Ctrl+C to exit...")
+            input()
+            continue
+        
         if client.battle.is_player_turn(client.player_name):
             action = cli.print_menu("Your turn", [
                 "Attack",
@@ -612,8 +674,40 @@ def main():
                 client.execute_attack(chosen_move)
                 client.battle.switch_turn()
             elif action == 1:  # Chat
-                msg = cli.get_user_input("Message")
-                client.send_chat(msg)
+                # Show chat options
+                chat_action = cli.print_menu("Chat Options", [
+                    "Send Text Message",
+                    "Send Sticker Image",
+                    "Send Emoji Sticker",
+                    "Back"
+                ])
+                
+                if chat_action == 0:  # Text only
+                    msg = cli.get_user_input("Message")
+                    # Send via async chat (non-blocking)
+                    if client.async_chat:
+                        client.async_chat.send_text(msg)
+                    # Log locally
+                    client.chat_handler.send_message(client.player_name, msg)
+                elif chat_action == 1:  # Sticker image file
+                    print("\nEnter path to sticker image file (320x320px, <10MB):")
+                    sticker_path = cli.get_user_input("File path")
+                    if client.async_chat:
+                        if client.async_chat.send_sticker(sticker_path):
+                            cli.print_success("Sticker sent!")
+                            # Log locally
+                            client.chat_handler.send_message(client.player_name, "[Sent sticker]", None)
+                        else:
+                            cli.print_error("Failed to send sticker")
+                elif chat_action == 2:  # Emoji stickers (old system)
+                    cli.print_stickers()
+                    sticker_id = cli.get_user_input("Sticker ID (1-10)")
+                    if client.chat_handler.validate_sticker(sticker_id):
+                        client.send_chat("", sticker_id)
+                        # Log locally
+                        client.chat_handler.send_message(client.player_name, "", sticker_id)
+                    else:
+                        cli.print_error("Invalid sticker ID")
             elif action == 2:  # Battle log
                 if client.battle:
                     cli.print_battle_log(client.battle.get_battle_log())
@@ -623,8 +717,56 @@ def main():
                     client.disconnect("FORFEIT")
                     break
         else:
+            # Not player's turn - allow chat while waiting
             cli.print_waiting(f"Waiting for {client.opponent_name}'s turn...")
-            time.sleep(1)
+            print("\nOptions: [C]hat | [W]ait (default)")
+            
+            # Use a simple input with timeout behavior
+            import sys
+            import select
+            
+            # For Windows compatibility, we'll use a simple input approach
+            # On Windows, select doesn't work with stdin, so we use a thread-based approach
+            choice = input("Enter choice (or press Enter to wait): ").strip().lower()
+            
+            if choice == 'c':
+                # Show chat options
+                chat_action = cli.print_menu("Chat Options", [
+                    "Send Text Message",
+                    "Send Sticker Image",
+                    "Send Emoji Sticker",
+                    "Back"
+                ])
+                
+                if chat_action == 0:  # Text only
+                    msg = cli.get_user_input("Message")
+                    # Send via async chat (non-blocking)
+                    if client.async_chat:
+                        client.async_chat.send_text(msg)
+                    # Log locally
+                    client.chat_handler.send_message(client.player_name, msg)
+                elif chat_action == 1:  # Sticker image file
+                    print("\nEnter path to sticker image file (320x320px, <10MB):")
+                    sticker_path = cli.get_user_input("File path")
+                    if client.async_chat:
+                        if client.async_chat.send_sticker(sticker_path):
+                            cli.print_success("Sticker sent!")
+                            # Log locally
+                            client.chat_handler.send_message(client.player_name, "[Sent sticker]", None)
+                        else:
+                            cli.print_error("Failed to send sticker")
+                elif chat_action == 2:  # Emoji stickers (old system)
+                    cli.print_stickers()
+                    sticker_id = cli.get_user_input("Sticker ID (1-10)")
+                    if client.chat_handler.validate_sticker(sticker_id):
+                        client.send_chat("", sticker_id)
+                        # Log locally
+                        client.chat_handler.send_message(client.player_name, "", sticker_id)
+                    else:
+                        cli.print_error("Invalid sticker ID")
+            else:
+                # Just wait a bit before refreshing
+                time.sleep(0.5)
 
     # Check if the result has been processed on a previous network tick
         if client.state_machine.get_state() == ConnectionState.BATTLE_ENDED:
